@@ -57,14 +57,38 @@ export default function PontoApp({ initialData }) {
   const [data, setData] = useState(initialData);
   const [selected, setSelected] = useState(null);
   const [notice, setNotice] = useState("");
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileNotice, setProfileNotice] = useState("");
   const [isPending, startTransition] = useTransition();
+  const user = data.user || { name: "Usuário", badge: "", role: "" };
 
   function changeMonth(month) {
     startTransition(async () => {
       const response = await fetch(`/api/records?month=${month}`);
+      if (response.status === 401) return window.location.assign("/signin");
       setData(await response.json());
       setSelected(null);
     });
+  }
+
+  function loadProfile() {
+    setProfileOpen(true);
+    setProfileNotice("");
+  }
+
+  async function saveProfile(event) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const response = await fetch("/api/profile", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: form.get("name"), badge: form.get("badge"), weeklyHours: form.get("weeklyHours"), saturdayWork: form.get("saturdayWork") === "on", scheduleChangedAt: form.get("scheduleChangedAt") }) });
+    const result = await response.json();
+    if (!response.ok) return setProfileNotice(result.error || "Não foi possível salvar o perfil.");
+    setProfileOpen(false);
+    changeMonth(data.activeMonth);
+  }
+
+  async function signOut() {
+    await fetch("/api/auth/signout", { method: "POST" });
+    window.location.assign("/signin");
   }
 
   async function save(event) {
@@ -81,6 +105,15 @@ export default function PontoApp({ initialData }) {
   const formRecord = selected || { date: data.activeMonth + "-01", punches: [], note: "" };
   const punches = [...formRecord.punches, "", "", "", ""].slice(0, 4);
 
+  const firstName = user.name ? user.name.split(" ")[0].toLowerCase() : "usuário";
+  const initials = user.name ? user.name.split(" ").map((word) => word[0]).slice(0, 2).join("") : "?";
+  const currentRule = data.rules?.length ? [...data.rules].at(-1) : null;
+  const weeklyHoursLabel = currentRule ? `${Math.floor(currentRule.weeklyMinutes / 60)}h${String(currentRule.weeklyMinutes % 60).padStart(2, "0")}` : "44h";
+  const dailyTarget = currentRule ? Math.round((currentRule.weeklyMinutes - currentRule.saturdayMinutes) / 5) : 528;
+  const dailyLabel = `${Math.floor(dailyTarget / 60)}h${String(dailyTarget % 60).padStart(2, "0")}`;
+  const saturdayLabel = currentRule?.saturdayMinutes ? `${Math.floor(currentRule.saturdayMinutes / 60)}h` : null;
+  const today = new Date().toISOString().slice(0, 10);
+
   return <main className="shell">
     <aside className="rail">
       <div className="brand"><span className="brand-mark">p</span><b>Ponto</b></div>
@@ -92,18 +125,21 @@ export default function PontoApp({ initialData }) {
       </nav>
       <div className="contract" id="regras">
         <h2>Vigência atual</h2>
-        <p className="contract-rule">44h semanais</p>
-        <p className="contract-detail">8h48 sem sábado<br />8h + 4h com sábado</p>
+        <p className="contract-rule">{weeklyHoursLabel} semanais</p>
+        <p className="contract-detail">{dailyLabel} por dia{saturdayLabel ? <> · {saturdayLabel} no sábado</> : null}<br />
+          {currentRule?.effectiveFrom && currentRule.effectiveFrom !== "0000-01-01" ? <>vigente desde {currentRule.effectiveFrom.split("-").reverse().join("/")}</> : "desde o primeiro registro"}</p>
       </div>
       <footer>Dados locais · SQLite ativo</footer>
     </aside>
 
     <section className="workspace">
       <header className="topline">
-        <h1>Olá, {data.employee.name.split(" ")[0].toLowerCase()}.</h1>
+        <h1>Olá, {firstName}.</h1>
         <div className="identity">
-          <span className="identity-badge" aria-hidden="true">{data.employee.name.split(" ").map((word) => word[0]).slice(0, 2).join("")}</span>
-          <div className="identity-info"><b>{data.employee.role}</b><small>Chapa {data.employee.badge}</small></div>
+          <button className="ghost-btn" onClick={loadProfile}>Meu perfil</button>
+          <button className="ghost-btn" onClick={signOut}>Sair</button>
+          <span className="identity-badge" aria-hidden="true">{initials}</span>
+          <div className="identity-info"><b>{user.role || "Colaborador"}</b><small>{user.badge ? `Chapa ${user.badge}` : user.email}</small></div>
         </div>
       </header>
 
@@ -177,10 +213,38 @@ export default function PontoApp({ initialData }) {
           {notice && <p className="notice" role="status">{notice}</p>}
           <div className="rule-callout">
             <b>Regra aplicada</b>
-            <p>{formRecord.date <= "2026-04-15" ? "Até 15/04/2026: meta parcial de 4h40." : "A partir de 16/04: 44h semanais; 8h48 sem sábado ou 8h por dia + 4h no sábado."}</p>
+            <p>{data.rules?.length ? "As metas seguem a vigência do seu perfil; alterações de horário valem a partir da data informada." : "Nenhuma vigência configurada — defina a carga horária em Meu perfil."}</p>
           </div>
         </aside>
       </section>
+
+      {profileOpen && <div className="modal-backdrop" onClick={() => setProfileOpen(false)}>
+        <div className="modal profile" role="dialog" aria-modal="true" aria-label="Meu perfil" onClick={(e) => e.stopPropagation()}>
+          <div className="editor-top">
+            <h2>Meu perfil</h2>
+            <button className="close" onClick={() => setProfileOpen(false)} aria-label="Fechar perfil">×</button>
+          </div>
+          <p className="editor-sub">Dados da conta e vigências usadas no cálculo das metas.</p>
+          <form onSubmit={saveProfile}>
+            <label>Nome completo<input name="name" type="text" defaultValue={user.name} placeholder="Seu nome completo" /></label>
+            <label>Número de cadastro (chapa)<input name="badge" type="text" defaultValue={user.badge} placeholder="Ex.: 005638" /></label>
+            <label>Carga horária semanal (h)
+              <input name="weeklyHours" type="number" step="0.5" min="1" max="60" defaultValue={currentRule ? currentRule.weeklyMinutes / 60 : 44} />
+              <small className="field-hint">Atual: {weeklyHoursLabel} · {dailyLabel} por dia útil{saturdayLabel ? ` · ${saturdayLabel} no sábado` : ""}.</small>
+            </label>
+            <label className="auth-check">
+              <input name="saturdayWork" type="checkbox" defaultChecked={Boolean(currentRule?.saturdayMinutes)} />
+              Trabalho sábados alternados (4h)
+            </label>
+            <label>Houve alteração de horário? Vigente a partir de
+              <input name="scheduleChangedAt" type="date" max={today} />
+              <small className="field-hint">Informe para criar uma nova vigência a partir desta data; deixe vazio para manter a atual.</small>
+            </label>
+            <button className="save" type="submit">Salvar perfil</button>
+          </form>
+          {profileNotice && <p className="notice" role="status">{profileNotice}</p>}
+        </div>
+      </div>}
     </section>
   </main>;
 }
