@@ -1,0 +1,16 @@
+node_modules
+.next
+.git
+ponto.sqlite
+ponto.sqlite-shm
+ponto.sqlite-wal
+*.log
+npm-debug.log*
+.agents
+.claude
+.codex
+.cursor
+.grok
+.impeccable
+skills-lock.json
+CLAUDE.md
